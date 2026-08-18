@@ -23,6 +23,12 @@ import matplotlib.pyplot as plt
 
 TICKERS = ['XEQT.TO', 'ZLU.TO']
 
+# Your actual portfolio split -- must sum to 1.0. Edit these to match reality.
+PORTFOLIO_WEIGHTS = {
+    'XEQT.TO': 0.70,
+    'ZLU.TO': 0.30,
+}
+
 def fetch_price_data(tickers, period='2y'):
     try:
         data = yf.download(tickers, period=period)['Close']
@@ -117,6 +123,31 @@ def calculate_rolling_correlation(returns, ticker_a, ticker_b, window=60):
     return returns[ticker_a].rolling(window).corr(returns[ticker_b])
 
 
+def calculate_portfolio_returns(returns, weights):
+    """
+    Collapse per-ticker daily returns into a single blended daily return
+    series, weighted by portfolio allocation (weights values should sum
+    to 1.0, e.g. {'XEQT.TO': 0.7, 'ZLU.TO': 0.3} for a 70/30 split).
+    Feed this into calculate_volatility/calculate_sharpe_ratio/
+    calculate_max_drawdown just like a single ticker's returns.
+    """
+    weighted_sum = sum(returns[ticker] * weight for ticker, weight in weights.items())
+    return weighted_sum
+
+
+def calculate_naive_volatility(volatility_by_ticker, weights):
+    """
+    The volatility you'd get by weighted-averaging each ticker's vol
+    directly, IGNORING how correlated they are. This is the "no
+    diversification benefit" baseline -- it's what your portfolio's risk
+    would be if XEQT and ZLU always moved in perfect lockstep (correlation
+    = 1.0). The gap between this and the actual blended volatility
+    (from calculate_volatility on calculate_portfolio_returns' output)
+    is the diversification benefit, in the same annualized-vol units.
+    """
+    return sum(volatility_by_ticker[ticker] * weight for ticker, weight in weights.items())
+
+
 def plot_correlation_check(returns, rolling_corr, ticker_a, ticker_b, window=60):
     """
     Two-panel visual check, since neither correlation number alone tells
@@ -182,5 +213,18 @@ if __name__ == '__main__':
     print(f"  Min:  {rolling_corr.min():.4f} (on {rolling_corr.idxmin().date()})")
     print(f"  Max:  {rolling_corr.max():.4f} (on {rolling_corr.idxmax().date()})")
     print(f"  Mean: {rolling_corr.mean():.4f}\n")
+
+    portfolio_returns = calculate_portfolio_returns(returns, PORTFOLIO_WEIGHTS)
+    portfolio_volatility = calculate_volatility(portfolio_returns)
+    portfolio_sharpe = calculate_sharpe_ratio(portfolio_returns)
+    naive_volatility = calculate_naive_volatility(volatility, PORTFOLIO_WEIGHTS)
+    diversification_benefit = naive_volatility - portfolio_volatility
+
+    weights_str = ', '.join(f"{t} {w:.0%}" for t, w in PORTFOLIO_WEIGHTS.items())
+    print(f"Blended portfolio ({weights_str}):")
+    print(f"  Actual volatility:        {portfolio_volatility:.4f}")
+    print(f"  Naive volatility (no diversification, corr=1): {naive_volatility:.4f}")
+    print(f"  Diversification benefit:  {diversification_benefit:.4f} (lower risk from the two funds not moving in lockstep)")
+    print(f"  Portfolio Sharpe (rf=4%): {portfolio_sharpe:.4f}")
 
     plot_correlation_check(returns, rolling_corr, TICKERS[0], TICKERS[1], window=rolling_window)
