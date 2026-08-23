@@ -102,12 +102,12 @@ def calculate_sortino_ratio(returns, risk_free_rate=0.04):
     """
     daily_rf = risk_free_rate / 252
     excess_returns = returns - daily_rf
-    downside_returns = excess_returns[excess_returns < 0]
-    downside_deviation = downside_returns.std()
-    
+    downside_diff = excess_returns.clip(upper=0)
+    downside_deviation = np.sqrt((downside_diff ** 2).mean())
+
     if downside_deviation == 0:
         return np.nan  # Avoid division by zero; Sortino ratio is undefined if no downside volatility
-    
+
     return (excess_returns.mean() / downside_deviation) * np.sqrt(252)
 
 
@@ -225,6 +225,9 @@ if __name__ == '__main__':
 
     print("Sharpe Ratio (rf=4%):")
     print(sharpe, "\n")
+
+    print("Sortino Ratio (rf=4%):")
+    print(sortino, "\n")
 
     print(f"Correlation ({TICKERS[0]} vs {TICKERS[1]}):")
     print(f"  Pearson  (linear):    {pearson_corr:.4f}")
