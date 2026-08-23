@@ -89,6 +89,27 @@ def calculate_sharpe_ratio(returns, risk_free_rate=0.04):
     excess_returns = returns - daily_rf
     return (excess_returns.mean() / returns.std()) * np.sqrt(252)
 
+def calculate_sortino_ratio(returns, risk_free_rate=0.04):
+    """
+    Sortino ratio = risk-adjusted return, but only penalizes downside volatility.
+    This is often considered a more accurate measure of risk-adjusted performance,
+    since investors are typically more concerned with losses than with volatility
+    in general.
+
+    risk_free_rate is an annual rate (default 4%, roughly a T-bill/GIC yield --
+    adjust this if you want to benchmark against something else).
+    Formula: (mean daily excess return / daily downside deviation) * sqrt(252) to annualize.
+    """
+    daily_rf = risk_free_rate / 252
+    excess_returns = returns - daily_rf
+    downside_returns = excess_returns[excess_returns < 0]
+    downside_deviation = downside_returns.std()
+    
+    if downside_deviation == 0:
+        return np.nan  # Avoid division by zero; Sortino ratio is undefined if no downside volatility
+    
+    return (excess_returns.mean() / downside_deviation) * np.sqrt(252)
+
 
 def calculate_correlation(returns, ticker_a, ticker_b, method='pearson'):
     """
@@ -190,6 +211,7 @@ if __name__ == '__main__':
     volatility = calculate_volatility(returns)
     max_dd = calculate_max_drawdown(prices)
     sharpe = calculate_sharpe_ratio(returns)
+    sortino = calculate_sortino_ratio(returns)
     pearson_corr = calculate_correlation(returns, TICKERS[0], TICKERS[1], method='pearson')
     spearman_corr = calculate_correlation(returns, TICKERS[0], TICKERS[1], method='spearman')
     rolling_window = 60
