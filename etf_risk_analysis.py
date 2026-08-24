@@ -29,6 +29,8 @@ PORTFOLIO_WEIGHTS = {
     'ZLU.TO': 0.30,
 }
 
+BENCHMARK = '^GSPC'  # S&P 500 -- lets us check ZLU's ~0.30-beta factsheet claim against real data
+
 def fetch_price_data(tickers, period='2y'):
     try:
         data = yf.download(tickers, period=period)['Close']
@@ -104,11 +106,43 @@ def calculate_sortino_ratio(returns, risk_free_rate=0.04):
     excess_returns = returns - daily_rf
     downside_diff = excess_returns.clip(upper=0)
     downside_deviation = np.sqrt((downside_diff ** 2).mean())
+    safe_downside_deviation = downside_deviation.replace(0, np.nan)  # per-ticker zero-safety; avoids ValueError from `if <Series>:`
 
-    if downside_deviation == 0:
-        return np.nan  # Avoid division by zero; Sortino ratio is undefined if no downside volatility
+    return (excess_returns.mean() / safe_downside_deviation) * np.sqrt(252)
 
-    return (excess_returns.mean() / downside_deviation) * np.sqrt(252)
+def calculate_calmar_ratio(prices):
+    """
+    Calmar ratio = risk-adjusted return, but uses max drawdown as the risk measure.
+    This is often considered a more accurate measure of risk-adjusted performance,
+    since investors are typically more concerned with losses than with volatility
+    in general.
+
+    Formula: (mean annual return / max drawdown)
+    """
+    max_drawdown = calculate_max_drawdown(prices)
+    start_price = prices.iloc[0]
+    end_price = prices.iloc[-1]
+    num_trading_days = len(prices) - 1
+    cagr = (end_price / start_price) ** (252 / num_trading_days) - 1
+    safe_max_drawdown = max_drawdown.replace(0, np.nan)  # per-ticker zero-safety; avoids ValueError from `if <Series>:`
+    return cagr / abs(safe_max_drawdown)
+
+def calculate_beta(returns, ticker, benchmark_returns):
+    """
+    Beta = how much a fund's returns move relative to a benchmark's.
+    Beta of 1.0 means it moves in lockstep with the benchmark on average;
+    below 1.0 (like ZLU's ~0.30 factsheet claim) means it's historically
+    dampened -- moving only a fraction as much, in either direction.
+
+    Covariance measures how the two move together; dividing by the
+    benchmark's own variance rescales that into "per unit of benchmark
+    movement," which is what makes beta comparable across different funds.
+    Series.cov() aligns the two series by date automatically, so minor
+    calendar mismatches (e.g. TSX vs. NYSE holidays) are handled for you.
+    """
+    covariance = returns[ticker].cov(benchmark_returns)
+    benchmark_variance = benchmark_returns.var()
+    return covariance / benchmark_variance
 
 
 def calculate_correlation(returns, ticker_a, ticker_b, method='pearson'):
@@ -212,6 +246,10 @@ if __name__ == '__main__':
     max_dd = calculate_max_drawdown(prices)
     sharpe = calculate_sharpe_ratio(returns)
     sortino = calculate_sortino_ratio(returns)
+    calmar = calculate_calmar_ratio(prices)
+    benchmark_prices = fetch_price_data([BENCHMARK], period='2y').squeeze()
+    benchmark_returns = calculate_returns(benchmark_prices)
+    beta_by_ticker = {ticker: calculate_beta(returns, ticker, benchmark_returns) for ticker in TICKERS}
     pearson_corr = calculate_correlation(returns, TICKERS[0], TICKERS[1], method='pearson')
     spearman_corr = calculate_correlation(returns, TICKERS[0], TICKERS[1], method='spearman')
     rolling_window = 60
@@ -228,6 +266,14 @@ if __name__ == '__main__':
 
     print("Sortino Ratio (rf=4%):")
     print(sortino, "\n")
+
+    print("Calmar Ratio:")
+    print(calmar, "\n")
+
+    print(f"Beta (vs {BENCHMARK}):")
+    for ticker, beta in beta_by_ticker.items():
+        print(f"  {ticker}: {beta:.4f}")
+    print()
 
     print(f"Correlation ({TICKERS[0]} vs {TICKERS[1]}):")
     print(f"  Pearson  (linear):    {pearson_corr:.4f}")
