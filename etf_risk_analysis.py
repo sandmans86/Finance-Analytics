@@ -24,10 +24,7 @@ import matplotlib.pyplot as plt
 TICKERS = ['XEQT.TO', 'ZLU.TO']
 
 # Your actual portfolio split -- must sum to 1.0. Edit these to match reality.
-PORTFOLIO_WEIGHTS = {
-    'XEQT.TO': 0.70,
-    'ZLU.TO': 0.30,
-}
+PORTFOLIO_WEIGHTS = {'XEQT.TO': 0.70, 'ZLU.TO': 0.30}
 
 BENCHMARK = '^GSPC'  # S&P 500 -- lets us check ZLU's ~0.30-beta factsheet claim against real data
 
@@ -203,6 +200,105 @@ def calculate_naive_volatility(volatility_by_ticker, weights):
     return sum(volatility_by_ticker[ticker] * weight for ticker, weight in weights.items())
 
 
+def sweep_portfolio_weights(returns, ticker_a, ticker_b, weight_b_values):
+    """
+    Recompute the blended portfolio's volatility, max drawdown, and Sharpe
+    ratio across a range of ticker_b weights (ticker_a always gets the
+    remainder, 1 - weight_b). This turns "should I hold less ZLU" from a
+    one-off calculation into a curve -- so instead of an open-ended "less
+    over time," you can see the specific weight where Sharpe stops
+    improving as ticker_b's share shrinks, and how much drawdown
+    protection you're trading away to get there.
+
+    Returns a DataFrame, one row per weight tested, so it's easy to print
+    as a table or hand straight to a plot.
+    """
+    rows = []
+    for weight_b in weight_b_values:
+        weights = {ticker_a: 1 - weight_b, ticker_b: weight_b}
+        portfolio_returns = calculate_portfolio_returns(returns, weights)
+        portfolio_growth = calculate_cumulative_growth(portfolio_returns)
+        rows.append({
+            'weight_b': weight_b,
+            'volatility': calculate_volatility(portfolio_returns),
+            'max_drawdown': calculate_max_drawdown(portfolio_growth),
+            'sharpe': calculate_sharpe_ratio(portfolio_returns),
+        })
+    return pd.DataFrame(rows)
+
+
+def calculate_cumulative_growth(returns):
+    """
+    Turn a daily return series into cumulative growth of $1 invested at
+    the start of the period. (1 + returns) turns each day's pct return
+    into a growth multiplier (e.g. +1% -> 1.01); cumprod() compounds each
+    day's multiplier onto the running total, so the value at date T is
+    what $1 would have grown to by then.
+    """
+    return (1 + returns).cumprod()
+
+
+def plot_growth_comparison(returns, portfolio_returns, weights):
+    """
+    Growth of $1 over time for each standalone ticker plus the blended
+    portfolio, all on the same axis -- the direct visual version of "did
+    diversification's risk reduction make up for the weaker ticker
+    dragging on returns." If the blended (dashed) line ends below the
+    best standalone line, that fund's lower volatility didn't pay for
+    itself dollar-for-dollar over this period -- the same conclusion the
+    Sharpe-ratio gap already implied, just visible directly as an ending
+    dollar value instead of a ratio.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = ['#2a78d6', '#eb6834', '#1baf7a']  # blue, orange, aqua -- fixed categorical order
+
+    for (ticker, weight), color in zip(weights.items(), colors):
+        growth = calculate_cumulative_growth(returns[ticker])
+        ax.plot(growth.index, growth.values, linewidth=2, color=color, label=f'{ticker} (100%)')
+
+    portfolio_growth = calculate_cumulative_growth(portfolio_returns)
+    weights_str = ' / '.join(f"{t} {w:.0%}" for t, w in weights.items())
+    ax.plot(portfolio_growth.index, portfolio_growth.values, linewidth=2.5,
+             color=colors[2], linestyle='--', label=f'Blended ({weights_str})')
+
+    ax.axhline(1, linewidth=0.8, color='gray')
+    ax.set_ylabel('Growth of $1 invested')
+    ax.set_title('Cumulative growth: standalone vs. blended portfolio')
+    ax.legend(loc='upper left')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_weight_sweep(sweep_results, ticker_b, current_weight_b):
+    """
+    Two-panel view of the weight sweep: Sharpe ratio and max drawdown,
+    each plotted against ticker_b's portfolio weight. A dashed vertical
+    line marks your current weight so you can see where you sit on both
+    curves at once -- the tradeoff between "how much return am I giving
+    up" (left) and "how much drawdown protection am I buying" (right)
+    as ticker_b's share changes.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    ax1.plot(sweep_results['weight_b'], sweep_results['sharpe'], linewidth=2, color='#2a78d6')
+    ax1.axvline(current_weight_b, linewidth=1, color='gray', linestyle='--', label='Current weight')
+    ax1.set_xlabel(f'{ticker_b} weight')
+    ax1.set_ylabel('Portfolio Sharpe ratio')
+    ax1.set_title('Sharpe vs. weight')
+    ax1.legend()
+
+    ax2.plot(sweep_results['weight_b'], sweep_results['max_drawdown'], linewidth=2, color='#eb6834')
+    ax2.axvline(current_weight_b, linewidth=1, color='gray', linestyle='--', label='Current weight')
+    ax2.set_xlabel(f'{ticker_b} weight')
+    ax2.set_ylabel('Portfolio max drawdown')
+    ax2.set_title('Drawdown vs. weight')
+    ax2.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_correlation_check(returns, rolling_corr, ticker_a, ticker_b, window=60):
     """
     Two-panel visual check, since neither correlation number alone tells
@@ -298,4 +394,13 @@ if __name__ == '__main__':
     print(f"  Diversification benefit:  {diversification_benefit:.4f} (lower risk from the two funds not moving in lockstep)")
     print(f"  Portfolio Sharpe (rf=4%): {portfolio_sharpe:.4f}")
 
+    zlu_weight = PORTFOLIO_WEIGHTS[TICKERS[1]]
+    weight_sweep_values = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+    sweep_results = sweep_portfolio_weights(returns, TICKERS[0], TICKERS[1], weight_sweep_values)
+
+    print(f"\nWeight sweep ({TICKERS[1]} weight 0% to 30%, {TICKERS[0]} gets the remainder):")
+    print(sweep_results.to_string(index=False))
+
     plot_correlation_check(returns, rolling_corr, TICKERS[0], TICKERS[1], window=rolling_window)
+    plot_growth_comparison(returns, portfolio_returns, PORTFOLIO_WEIGHTS)
+    plot_weight_sweep(sweep_results, TICKERS[1], zlu_weight)
