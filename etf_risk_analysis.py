@@ -21,7 +21,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 
 
-TICKERS = ['XEQT.TO', 'ZLU.TO']
+TICKERS = ['XEQT.TO', 'ZLU.TO', 'FEQT.NE']
 
 # Your actual portfolio split -- must sum to 1.0. Edit these to match reality.
 PORTFOLIO_WEIGHTS = {'XEQT.TO': 0.70, 'ZLU.TO': 0.30}
@@ -36,6 +36,18 @@ def fetch_price_data(tickers, period='2y'):
     if data.empty:
         raise RuntimeError("Couldn't download data: yfinance returned no data.")
     return data
+
+def calculate_correlation_matrix(returns, method = 'pearson'):
+    """
+    Pairwise correlation between Every pair of tickers in returns 
+    at once, instad of just one named pair.  With 2 tickers this 
+    is the same information as calculate correlation; with 3+ it's
+    the only practical way to see the whole pircure -- an N-ticker 
+    matrix has N*(N-1)/2 unique pairs, and you don't want to call 
+    calculate_correlation by hand for each one.
+    """
+    return returns.corr(method=method)
+
 
 def calculate_returns(prices):
     """
@@ -238,6 +250,7 @@ def calculate_cumulative_growth(returns):
     return (1 + returns).cumprod()
 
 
+
 def plot_growth_comparison(returns, portfolio_returns, weights):
     """
     Growth of $1 over time for each standalone ticker plus the blended
@@ -347,6 +360,7 @@ if __name__ == '__main__':
     benchmark_returns = calculate_returns(benchmark_prices)
     beta_by_ticker = {ticker: calculate_beta(returns, ticker, benchmark_returns) for ticker in TICKERS}
     pearson_corr = calculate_correlation(returns, TICKERS[0], TICKERS[1], method='pearson')
+    correlation_matrix_pearson = calculate_correlation_matrix(returns, method='pearson')
     spearman_corr = calculate_correlation(returns, TICKERS[0], TICKERS[1], method='spearman')
     rolling_window = 60
     rolling_corr = calculate_rolling_correlation(returns, TICKERS[0], TICKERS[1], window=rolling_window)
@@ -400,6 +414,8 @@ if __name__ == '__main__':
 
     print(f"\nWeight sweep ({TICKERS[1]} weight 0% to 30%, {TICKERS[0]} gets the remainder):")
     print(sweep_results.to_string(index=False))
+    print("Correlation Matrix:")
+    print(correlation_matrix_pearson, "\n")
 
     plot_correlation_check(returns, rolling_corr, TICKERS[0], TICKERS[1], window=rolling_window)
     plot_growth_comparison(returns, portfolio_returns, PORTFOLIO_WEIGHTS)
