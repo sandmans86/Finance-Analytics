@@ -2,6 +2,7 @@
 ## https://claude.ai/code/artifact/88004711-89e9-4623-8d44-aa0fc9f6ddff
 
 
+import os
 import subprocess
 import sys
 
@@ -15,18 +16,24 @@ def ensure_packages(packages):
 
 ensure_packages(['pandas', 'numpy', 'yfinance', 'matplotlib', 'scipy'])
 
+import textwrap
+
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 
-TICKERS = ['XEQT.TO', 'ZLU.TO', 'FEQT.NE']
+TICKERS = ['XEQT.TO', 'ZLU.TO']
 
 # Your actual portfolio split -- must sum to 1.0. Edit these to match reality.
 PORTFOLIO_WEIGHTS = {'XEQT.TO': 0.70, 'ZLU.TO': 0.30}
 
 BENCHMARK = '^GSPC'  # S&P 500 -- lets us check ZLU's ~0.30-beta factsheet claim against real data
+
+REPORT_OUTPUT_FOLDER = r'C:\Users\sande\OneDrive\Desktop\Python Files\PDF Output (Stock Analysis)'
+REPORT_OUTPUT_PATH = os.path.join(REPORT_OUTPUT_FOLDER, f'portfolio_report_{pd.Timestamp.today().strftime("%Y%m%d")}.pdf')
 
 def fetch_price_data(tickers, period='2y'):
     try:
@@ -251,7 +258,7 @@ def calculate_cumulative_growth(returns):
 
 
 
-def plot_growth_comparison(returns, portfolio_returns, weights):
+def plot_growth_comparison(returns, portfolio_returns, weights, pdf=None):
     """
     Growth of $1 over time for each standalone ticker plus the blended
     portfolio, all on the same axis -- the direct visual version of "did
@@ -261,6 +268,9 @@ def plot_growth_comparison(returns, portfolio_returns, weights):
     itself dollar-for-dollar over this period -- the same conclusion the
     Sharpe-ratio gap already implied, just visible directly as an ending
     dollar value instead of a ratio.
+
+    Pass `pdf` (an open PdfPages) to embed this chart into a PDF report
+    instead of popping up an interactive window.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     colors = ['#2a78d6', '#eb6834', '#1baf7a']  # blue, orange, aqua -- fixed categorical order
@@ -280,10 +290,14 @@ def plot_growth_comparison(returns, portfolio_returns, weights):
     ax.legend(loc='upper left')
 
     plt.tight_layout()
-    plt.show()
+    if pdf is not None:
+        pdf.savefig(fig)
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def plot_weight_sweep(sweep_results, ticker_b, current_weight_b):
+def plot_weight_sweep(sweep_results, ticker_b, current_weight_b, pdf=None):
     """
     Two-panel view of the weight sweep: Sharpe ratio and max drawdown,
     each plotted against ticker_b's portfolio weight. A dashed vertical
@@ -291,6 +305,9 @@ def plot_weight_sweep(sweep_results, ticker_b, current_weight_b):
     curves at once -- the tradeoff between "how much return am I giving
     up" (left) and "how much drawdown protection am I buying" (right)
     as ticker_b's share changes.
+
+    Pass `pdf` (an open PdfPages) to embed this chart into a PDF report
+    instead of popping up an interactive window.
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -309,10 +326,14 @@ def plot_weight_sweep(sweep_results, ticker_b, current_weight_b):
     ax2.legend()
 
     plt.tight_layout()
-    plt.show()
+    if pdf is not None:
+        pdf.savefig(fig)
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def plot_correlation_check(returns, rolling_corr, ticker_a, ticker_b, window=60):
+def plot_correlation_check(returns, rolling_corr, ticker_a, ticker_b, window=60, pdf=None):
     """
     Two-panel visual check, since neither correlation number alone tells
     you the full story:
@@ -327,6 +348,9 @@ def plot_correlation_check(returns, rolling_corr, ticker_a, ticker_b, window=60)
     diversification benefit has been consistent; spikes (especially
     upward, toward 1.0) show periods -- often selloffs -- where the two
     funds moved together and diversification temporarily disappeared.
+
+    Pass `pdf` (an open PdfPages) to embed this chart into a PDF report
+    instead of popping up an interactive window.
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -344,7 +368,195 @@ def plot_correlation_check(returns, rolling_corr, ticker_a, ticker_b, window=60)
     ax2.set_title(f'{window}-day rolling correlation')
 
     plt.tight_layout()
-    plt.show()
+    if pdf is not None:
+        pdf.savefig(fig)
+        plt.close(fig)
+    else:
+        plt.show()
+
+
+def _add_text_page(pdf, title, paragraphs):
+    """
+    Render one PDF page of wrapped body text under a title. Reuses
+    matplotlib (already a dependency here) as the text-layout canvas
+    instead of pulling in a whole separate PDF/document library --
+    an axis-off figure with placed text does the job for a report
+    this size.
+
+    `paragraphs` is a list of strings; each is word-wrapped and
+    rendered as its own block, with a gap after it. A short one-line
+    string (e.g. a single stat line) just renders as one line --
+    no special casing needed between "prose" and "data line" callers.
+    """
+    fig, ax = plt.subplots(figsize=(8.5, 11))
+    ax.axis('off')
+    ax.set_position([0, 0, 1, 1])  # make the axes span the full page -- otherwise matplotlib's
+    # default subplot margins (meant for tick labels, which we don't have) shift transAxes
+    # coordinates off-center relative to the actual printed page edges.
+
+    y = 0.95
+    ax.text(0.08, y, title, fontsize=16, fontweight='bold', va='top', transform=ax.transAxes)
+    y -= 0.06
+
+    for paragraph in paragraphs:
+        wrapped = textwrap.fill(paragraph, width=95)
+        line_count = wrapped.count('\n') + 1
+        ax.text(0.08, y, wrapped, fontsize=10.5, va='top', ha='left',
+                 transform=ax.transAxes, linespacing=1.6)
+        y -= 0.028 * line_count + 0.025  # roughly one line-height per wrapped line, plus a paragraph gap
+
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def generate_portfolio_report(prices, returns, benchmark_returns, benchmark_name, weights, output_path,
+                               risk_free_rate=0.04, weight_sweep_values=None):
+    """
+    Compile every metric built in this file into a single PDF, written
+    top to bottom as a narrative: what each metric means, what range is
+    generally considered good (informal rules of thumb, not hard
+    cutoffs), and then what your specific numbers say.
+
+    Scoped to `weights` -- your ACTUAL holdings -- not every ticker in
+    `prices`/`returns`. If you've added a candidate ticker (e.g. FEQT)
+    to TICKERS just to compare it but didn't add it to PORTFOLIO_WEIGHTS,
+    it's correctly left out of this report.
+    """
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)  # PdfPages errors out if the folder doesn't exist yet
+
+    portfolio_tickers = list(weights.keys())
+    portfolio_prices = prices[portfolio_tickers]
+    portfolio_returns_by_ticker = returns[portfolio_tickers]
+
+    volatility = calculate_volatility(portfolio_returns_by_ticker)
+    max_dd = calculate_max_drawdown(portfolio_prices)
+    sharpe = calculate_sharpe_ratio(portfolio_returns_by_ticker, risk_free_rate)
+    sortino = calculate_sortino_ratio(portfolio_returns_by_ticker, risk_free_rate)
+    calmar = calculate_calmar_ratio(portfolio_prices)
+    beta_by_ticker = {t: calculate_beta(portfolio_returns_by_ticker, t, benchmark_returns) for t in portfolio_tickers}
+
+    blended_returns = calculate_portfolio_returns(portfolio_returns_by_ticker, weights)
+    blended_volatility = calculate_volatility(blended_returns)
+    blended_sharpe = calculate_sharpe_ratio(blended_returns, risk_free_rate)
+    naive_volatility = calculate_naive_volatility(volatility, weights)
+    diversification_benefit = naive_volatility - blended_volatility
+
+    weights_str = ', '.join(f"{t} {w:.0%}" for t, w in weights.items())
+
+    with PdfPages(output_path) as pdf:
+        _add_text_page(pdf, "Portfolio Risk & Diversification Report", [
+            f"Holdings analyzed: {weights_str}.",
+            f"Report generated {pd.Timestamp.today().date()}, covering the trailing price history pulled for this analysis.",
+            "This report walks through, in order: raw risk (volatility, drawdown), risk-adjusted return "
+            "(Sharpe, Sortino, Calmar), market sensitivity (beta), diversification (correlation), and finally "
+            "how your actual blended portfolio performs compared to holding either fund alone. Each section "
+            "explains what the metric means and what range is generally considered good, before showing your "
+            "specific numbers.",
+        ])
+
+        vol_lines = [f"{t}: {volatility[t]:.1%} annualized volatility, worst drawdown {max_dd[t]:.1%}"
+                     for t in portfolio_tickers]
+        _add_text_page(pdf, "Volatility & Max Drawdown", [
+            "Volatility is the standard deviation of daily returns, annualized -- it measures how much a "
+            "fund's performance swings around its average, in either direction. There's no universal 'good' "
+            "number here; it's a direct measure of how bumpy the ride is, and lower generally means a smoother "
+            "experience holding it day to day.",
+            "Max drawdown is the largest peak-to-trough decline over the period -- the worst-case pain an "
+            "investor actually lived through. This matters more than volatility for a gut-check on risk "
+            "tolerance, since it answers 'how bad did it get at the worst point' rather than an average.",
+            "Your holdings:",
+            *vol_lines,
+        ])
+
+        sharpe_lines = [f"{t}: Sharpe {sharpe[t]:.2f}" for t in portfolio_tickers]
+        sortino_lines = [f"{t}: Sortino {sortino[t]:.2f}" for t in portfolio_tickers]
+        calmar_lines = [f"{t}: Calmar {calmar[t]:.2f}" for t in portfolio_tickers]
+        _add_text_page(pdf, "Risk-Adjusted Return: Sharpe, Sortino, Calmar", [
+            "Sharpe ratio measures excess return (over an assumed risk-free rate, "
+            f"{risk_free_rate:.0%} annually here) per unit of total volatility taken on. As an informal rule "
+            "of thumb, a Sharpe above 1.0 is considered good and above 2.0 very good -- these are common "
+            "conventions, not hard cutoffs.",
+            *sharpe_lines,
+            "Sortino ratio is the same idea, but only penalizes downside volatility -- upside swings aren't "
+            "'risk' to an investor, so this is often considered a more honest measure of risk-adjusted "
+            "performance. Because it ignores the good kind of volatility, Sortino numbers typically run "
+            "higher than Sharpe for the same fund; a common rule of thumb treats above 2.0 as good and above "
+            "3.0 as very good, but direct comparison to Sharpe's 1.0/2.0 thresholds isn't apples to apples.",
+            *sortino_lines,
+            "Calmar ratio divides annualized return by max drawdown instead of volatility -- it answers 'how "
+            "much return did I get per unit of worst-case pain,' a more intuitive gut-check for risk tolerance "
+            "than a volatility-based ratio. A Calmar above 1.0 (annual return exceeds worst drawdown) is "
+            "generally considered good, above 3.0 very good, as a loose convention.",
+            *calmar_lines,
+        ])
+
+        beta_lines = [f"{t}: beta {beta_by_ticker[t]:.2f} vs. {benchmark_name}" for t in portfolio_tickers]
+        _add_text_page(pdf, "Beta: Market Sensitivity", [
+            f"Beta measures how much a fund's returns move relative to a benchmark ({benchmark_name} here). "
+            "A beta of 1.0 means it moves in lockstep with the benchmark on average; below 1.0 means it's "
+            "historically dampened, moving only a fraction as much in either direction; above 1.0 means it "
+            "amplifies the benchmark's moves. Beta isn't inherently 'good' or 'bad' -- it reflects how much "
+            "market risk a fund is designed to carry, and the right level depends on your own risk tolerance "
+            "and what role the fund plays in your portfolio.",
+            *beta_lines,
+        ])
+
+        corr_pairs = []
+        for i, ticker_a in enumerate(portfolio_tickers):
+            for ticker_b in portfolio_tickers[i + 1:]:
+                pearson = calculate_correlation(portfolio_returns_by_ticker, ticker_a, ticker_b, method='pearson')
+                spearman = calculate_correlation(portfolio_returns_by_ticker, ticker_a, ticker_b, method='spearman')
+                corr_pairs.append(f"{ticker_a} vs. {ticker_b}: Pearson {pearson:.2f}, Spearman {spearman:.2f}")
+        _add_text_page(pdf, "Diversification: Correlation", [
+            "Correlation measures how closely two funds' daily returns move together, from -1 to 1. This is "
+            "the real test of whether holding multiple funds is actually diversifying you: a correlation near "
+            "0 means they tend to move independently, smoothing the combined ride, while a correlation near "
+            "1.0 means they move together and adding the second fund barely helps, regardless of how "
+            "different their sector or geography breakdowns look on paper.",
+            "Pearson correlation measures the strength of a linear relationship specifically; Spearman ranks "
+            "the values instead, capturing any monotonic relationship. When the two are close, the linear "
+            "assumption Pearson relies on is reasonable.",
+            *corr_pairs,
+        ])
+
+        if len(portfolio_tickers) >= 2:
+            corr_ticker_a, corr_ticker_b = portfolio_tickers[0], portfolio_tickers[1]
+            rolling_corr = calculate_rolling_correlation(portfolio_returns_by_ticker, corr_ticker_a, corr_ticker_b)
+            plot_correlation_check(portfolio_returns_by_ticker, rolling_corr, corr_ticker_a, corr_ticker_b, pdf=pdf)
+
+        _add_text_page(pdf, "Your Blended Portfolio", [
+            f"Combining your holdings at their actual weights ({weights_str}) gives a real diversification "
+            f"benefit: the blended volatility came out to {blended_volatility:.1%}, versus a naive "
+            f"{naive_volatility:.1%} you'd expect if your funds always moved in perfect lockstep (correlation "
+            f"= 1.0). That {diversification_benefit:.1%} gap is risk reduction you're actually getting from "
+            "your funds not moving in sync.",
+            f"The portfolio's blended Sharpe ratio is {blended_sharpe:.2f}. Comparing this against each fund's "
+            "standalone Sharpe above tells you whether the diversification benefit is actually outweighing the "
+            "return given up by holding the weaker-performing fund at your current weight -- if the blended "
+            "Sharpe sits below your best standalone holding's Sharpe, the risk reduction isn't fully "
+            "compensating for the return given up, at this specific weighting.",
+        ])
+
+        if weight_sweep_values and len(portfolio_tickers) >= 2:
+            ticker_a, ticker_b = portfolio_tickers[0], portfolio_tickers[1]
+            sweep_results = sweep_portfolio_weights(portfolio_returns_by_ticker, ticker_a, ticker_b, weight_sweep_values)
+            sweep_lines = [
+                f"{row.weight_b:.0%} {ticker_b}: Sharpe {row.sharpe:.3f}, max drawdown {row.max_drawdown:.1%}"
+                for row in sweep_results.itertuples()
+            ]
+            _add_text_page(pdf, f"Finding the Right {ticker_b} Weight", [
+                f"Recomputing the blend across a range of {ticker_b} weights (with {ticker_a} taking the "
+                f"remainder) shows how Sharpe and drawdown trade off as the split changes:",
+                *sweep_lines,
+            ])
+
+            plot_weight_sweep(sweep_results, ticker_b, weights[ticker_b], pdf=pdf)
+
+        plot_growth_comparison(portfolio_returns_by_ticker, blended_returns, weights, pdf=pdf)
+
+    print(f"Report saved to {output_path}")
 
 
 if __name__ == '__main__':
@@ -408,7 +620,6 @@ if __name__ == '__main__':
     print(f"  Diversification benefit:  {diversification_benefit:.4f} (lower risk from the two funds not moving in lockstep)")
     print(f"  Portfolio Sharpe (rf=4%): {portfolio_sharpe:.4f}")
 
-    zlu_weight = PORTFOLIO_WEIGHTS[TICKERS[1]]
     weight_sweep_values = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
     sweep_results = sweep_portfolio_weights(returns, TICKERS[0], TICKERS[1], weight_sweep_values)
 
@@ -417,6 +628,5 @@ if __name__ == '__main__':
     print("Correlation Matrix:")
     print(correlation_matrix_pearson, "\n")
 
-    plot_correlation_check(returns, rolling_corr, TICKERS[0], TICKERS[1], window=rolling_window)
-    plot_growth_comparison(returns, portfolio_returns, PORTFOLIO_WEIGHTS)
-    plot_weight_sweep(sweep_results, TICKERS[1], zlu_weight)
+    generate_portfolio_report(prices, returns, benchmark_returns, BENCHMARK, PORTFOLIO_WEIGHTS,
+                               REPORT_OUTPUT_PATH, weight_sweep_values=weight_sweep_values)
