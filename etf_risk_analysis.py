@@ -558,6 +558,19 @@ def generate_portfolio_report(prices, returns, benchmark_returns, benchmark_name
 
     print(f"Report saved to {output_path}")
 
+def drawdown_report(tickers=("XEQT.TO", "ZLU.TO"), lookback="1y"):
+    for t in tickers:
+        hist = yf.Ticker(t).history(period=lookback)["Close"]
+        last = hist.iloc[-1]
+        peak = hist.max()
+        peak_date = hist.idxmax().date()
+        wk = (last / hist.iloc[-6] - 1) * 100   # ~5 trading days back
+        mo = (last / hist.iloc[-22] - 1) * 100  # ~21 trading days back
+        dd = (last / peak - 1) * 100
+        print(f"{t}: last {last:.2f} | 1w {wk:+.1f}% | 1m {mo:+.1f}% | "
+              f"from peak {dd:+.1f}% (peak {peak:.2f} on {peak_date})")
+
+drawdown_report()
 
 if __name__ == '__main__':
     prices = fetch_price_data(TICKERS, period='2y')
